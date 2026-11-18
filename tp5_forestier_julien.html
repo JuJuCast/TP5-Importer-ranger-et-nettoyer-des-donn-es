@@ -1814,10 +1814,6 @@ GUINEA (41 ans), ETHIOPIA (41 ans), SOMALIA (41 ans).</li>
 <h2>B3</h2>
 <pre class="r"><code>library(writexl)
 
-# Création du dossier sorties/ si inexistant
-if (!dir.exists(&quot;sorties&quot;)) {
-  dir.create(&quot;sorties&quot;)
-}
 
 # B3.a - Export de bilan_meteo en CSV français et relecture
 write_csv2(bilan_meteo, &quot;sorties/bilan_meteo.csv&quot;)
@@ -1855,6 +1851,166 @@ l’attribut <code>spec</code> de <code>readr</code> est ajouté).</li>
 conservés. Avec un fichier CSV, les métadonnées R sont perdues et la
 colonne deviendrait une simple chaîne de caractères
 (<code>character</code>).</li>
+</ol></li>
+</ul>
+</div>
+</div>
+<div id="partie-c-ranger-les-données-tidy-data" class="section level1">
+<h1>Partie C : Ranger les données (tidy data)</h1>
+<div id="c1" class="section level2">
+<h2>C1</h2>
+<pre class="r"><code># C1.a - Passage de pluie au format long
+ordre_mois &lt;- c(&quot;janv&quot;, &quot;févr&quot;, &quot;mars&quot;, &quot;avr&quot;, &quot;mai&quot;, &quot;juin&quot;,
+                &quot;juil&quot;, &quot;août&quot;, &quot;sept&quot;, &quot;oct&quot;, &quot;nov&quot;, &quot;déc&quot;)
+
+pluie_long &lt;- pluie %&gt;%
+  pivot_longer(
+    cols = all_of(ordre_mois),
+    names_to = &quot;mois&quot;,
+    values_to = &quot;mm&quot;
+  )
+
+# C1.b - Transformation de mois en facteur ordonné selon le calendrier
+pluie_long &lt;- pluie_long %&gt;%
+  mutate(mois = factor(mois, levels = ordre_mois))
+
+# C1.c - Mois le plus pluvieux de chaque station en 2025
+mois_max_2025 &lt;- pluie_long %&gt;%
+  filter(annee == 2025) %&gt;%
+  group_by(station) %&gt;%
+  slice_max(order_by = mm, n = 1) %&gt;%
+  select(station, mois, mm)
+mois_max_2025</code></pre>
+<pre><code>## # A tibble: 4 × 3
+## # Groups:   station [4]
+##   station       mois     mm
+##   &lt;chr&gt;         &lt;fct&gt; &lt;dbl&gt;
+## 1 Besançon      janv    220
+## 2 Nîmes         janv     79
+## 3 Orléans       juil    139
+## 4 Saint-Étienne nov      97</code></pre>
+<pre class="r"><code># C1.d - Passage au format large par année, différence et plus forte hausse
+pluie_diff &lt;- pluie_long %&gt;%
+  pivot_wider(
+    names_from = annee,
+    values_from = mm
+  ) %&gt;%
+  mutate(difference = `2025` - `2024`)
+
+plus_forte_hausse &lt;- pluie_diff %&gt;%
+  slice_max(order_by = difference, n = 1)
+plus_forte_hausse</code></pre>
+<pre><code>## # A tibble: 1 × 5
+##   station  mois  `2024` `2025` difference
+##   &lt;chr&gt;    &lt;fct&gt;  &lt;dbl&gt;  &lt;dbl&gt;      &lt;dbl&gt;
+## 1 Besançon janv      66    220        154</code></pre>
+<ul>
+<li><ol start="3" style="list-style-type: lower-alpha">
+<li>En 2025, le mois le plus pluvieux a été janvier à Besançon (220 mm)
+et à Nîmes (79 mm), juillet à Orléans (139 mm) et novembre à
+Saint-Étienne (97 mm).</li>
+</ol></li>
+<li><ol start="4" style="list-style-type: lower-alpha">
+<li>La plus forte hausse a été enregistrée à Besançon au mois de janv
+avec +154 mm (passant de 66 mm en 2024 à 220 mm en 2025).</li>
+</ol></li>
+</ul>
+</div>
+<div id="c2" class="section level2">
+<h2>C2</h2>
+<pre class="r"><code># C2 - Passage des températures au format long puis calcul de l&#39;amplitude en format large
+meteo_temp_long &lt;- meteo %&gt;%
+  select(station, date, temp_min, temp_max) %&gt;%
+  pivot_longer(
+    cols = c(temp_min, temp_max),
+    names_to = &quot;type_mesure&quot;,
+    names_prefix = &quot;temp_&quot;,
+    values_to = &quot;temperature&quot;
+  )
+
+amplitude_moyenne &lt;- meteo_temp_long %&gt;%
+  pivot_wider(
+    names_from = type_mesure,
+    values_from = temperature
+  ) %&gt;%
+  mutate(amplitude = max - min) %&gt;%
+  group_by(station) %&gt;%
+  summarise(amplitude_moy = mean(amplitude, na.rm = TRUE), .groups = &quot;drop&quot;)
+amplitude_moyenne</code></pre>
+<pre><code>## # A tibble: 4 × 2
+##   station       amplitude_moy
+##   &lt;chr&gt;                 &lt;dbl&gt;
+## 1 Besançon               6.13
+## 2 Nîmes                  6.16
+## 3 Orléans                6.33
+## 4 Saint-Étienne          6.36</code></pre>
+<p>L’amplitude thermique quotidienne moyenne en janvier 2026 est de 6,13
+°C à Besançon, 6,16 °C à Nîmes, 6,33 °C à Orléans et 6,36 °C à
+Saint-Étienne.</p>
+</div>
+<div id="c3" class="section level2">
+<h2>C3</h2>
+<pre class="r"><code># C3.a - Import de &quot;wines.xlsx&quot; et passage au format long avec etape et descripteur
+wines &lt;- read_excel(&quot;data/wines.xlsx&quot;)
+
+wines_long &lt;- wines %&gt;%
+  pivot_longer(
+    cols = matches(&quot;^(rest|view|shaking|tasting)[0-9]+$&quot;),
+    names_to = c(&quot;etape&quot;, &quot;descripteur&quot;),
+    names_pattern = &quot;^([a-z]+)([0-9]+)$&quot;,
+    values_to = &quot;note&quot;
+  )
+
+# C3.b - Moyenne par vin et par étape, puis retour au format large ordonné
+wines_large &lt;- wines_long %&gt;%
+  group_by(Wines, Soul, Global, etape) %&gt;%
+  summarise(note_moyenne = mean(note, na.rm = TRUE), .groups = &quot;drop&quot;) %&gt;%
+  pivot_wider(
+    names_from = etape,
+    values_from = note_moyenne
+  ) %&gt;%
+  select(Wines, Soul, Global, rest, view, shaking, tasting)
+wines_large</code></pre>
+<pre><code>## # A tibble: 21 × 7
+##    Wines Soul      Global  rest  view shaking tasting
+##    &lt;chr&gt; &lt;chr&gt;      &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;   &lt;dbl&gt;   &lt;dbl&gt;
+##  1 1BEN  Reference   3.75  2.6   3.49    2.65    2.84
+##  2 1BOI  Reference   3.71  2.71  3.77    2.77    2.98
+##  3 1CHA  Soul 1      3.21  2.42  3.01    2.52    2.58
+##  4 1DAM  Reference   3.74  2.88  3.94    2.82    3.02
+##  5 1FON  Soul 1      3.54  2.48  3.31    2.54    2.72
+##  6 1ING  Soul 1      3.64  2.65  3.81    2.71    2.88
+##  7 1POY  Reference   3.93  2.57  4.23    2.71    3.02
+##  8 1ROC  Soul 2      3.46  2.52  3.42    2.64    2.73
+##  9 1TUR  Soul 2      3.18  2.40  3.41    2.58    2.66
+## 10 1VAU  Soul 2      2.46  2.38  2.74    2.41    2.34
+## # ℹ 11 more rows</code></pre>
+<pre class="r"><code># C3.c - Les 3 meilleurs vins à l&#39;étape tasting et leur type de sol
+top3_tasting &lt;- wines_large %&gt;%
+  slice_max(order_by = tasting, n = 3) %&gt;%
+  select(Wines, Soul, tasting)
+top3_tasting</code></pre>
+<pre><code>## # A tibble: 4 × 3
+##   Wines Soul      tasting
+##   &lt;chr&gt; &lt;chr&gt;       &lt;dbl&gt;
+## 1 1DAM  Reference    3.02
+## 2 1POY  Reference    3.02
+## 3 1BOI  Reference    2.98
+## 4 2DAM  Reference    2.98</code></pre>
+<pre class="r"><code># C3.d - Corrélation entre la note Global et la moyenne à l&#39;étape tasting
+cor_global_tasting &lt;- cor(wines_large$Global, wines_large$tasting)
+cor_global_tasting</code></pre>
+<pre><code>## [1] 0.8404885</code></pre>
+<ul>
+<li><ol start="3" style="list-style-type: lower-alpha">
+<li>Les 3 meilleurs vins à l’étape tasting sont 1DAM (3.02, sol :
+Reference), 1POY (3.02, sol : Reference), 1BOI (2.98, sol : Reference),
+2DAM (2.98, sol : Reference).</li>
+</ol></li>
+<li><ol start="4" style="list-style-type: lower-alpha">
+<li>La note Global est fortement corrélée positivement à la moyenne
+obtenue à l’étape tasting, avec un coefficient de corrélation linéaire r
+= 0.84.</li>
 </ol></li>
 </ul>
 </div>

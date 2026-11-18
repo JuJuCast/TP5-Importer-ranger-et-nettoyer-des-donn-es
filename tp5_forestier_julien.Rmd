@@ -147,6 +147,13 @@ prix_fr <- read_csv2("data/prix_fr.csv", na = "n/a")
 prix_fr
 ```
 
+
+
+
+
+
+
+
 # Partie B : Excel, SAS et export
 
 ## B1
@@ -223,10 +230,6 @@ top5_esper_basse
 
 library(writexl)
 
-# Création du dossier sorties/ si inexistant
-if (!dir.exists("sorties")) {
-  dir.create("sorties")
-}
 
 # B3.a - Export de bilan_meteo en CSV français et relecture
 write_csv2(bilan_meteo, "sorties/bilan_meteo.csv")
@@ -248,3 +251,121 @@ levels(pays_relu$CONTI)
 
 * a. À la relecture avec `read_csv2()`, on retrouve exactement les mêmes valeurs et dimensions que `bilan_meteo` (seul l'attribut `spec` de `readr` est ajouté).
 * c. Après relecture du fichier `.rds`, la colonne `CONTI` est toujours un facteur (`r is.factor(pays_relu$CONTI)`) avec ses niveaux conservés. Avec un fichier CSV, les métadonnées R sont perdues et la colonne deviendrait une simple chaîne de caractères (`character`).
+
+
+
+
+
+
+
+
+
+
+# Partie C : Ranger les données (tidy data)
+
+## C1
+
+```{r c1}
+# C1.a - Passage de pluie au format long
+ordre_mois <- c("janv", "févr", "mars", "avr", "mai", "juin",
+                "juil", "août", "sept", "oct", "nov", "déc")
+
+pluie_long <- pluie %>%
+  pivot_longer(
+    cols = all_of(ordre_mois),
+    names_to = "mois",
+    values_to = "mm"
+  )
+
+# C1.b - Transformation de mois en facteur ordonné selon le calendrier
+pluie_long <- pluie_long %>%
+  mutate(mois = factor(mois, levels = ordre_mois))
+
+# C1.c - Mois le plus pluvieux de chaque station en 2025
+mois_max_2025 <- pluie_long %>%
+  filter(annee == 2025) %>%
+  group_by(station) %>%
+  slice_max(order_by = mm, n = 1) %>%
+  select(station, mois, mm)
+mois_max_2025
+
+# C1.d - Passage au format large par année, différence et plus forte hausse
+pluie_diff <- pluie_long %>%
+  pivot_wider(
+    names_from = annee,
+    values_from = mm
+  ) %>%
+  mutate(difference = `2025` - `2024`)
+
+plus_forte_hausse <- pluie_diff %>%
+  slice_max(order_by = difference, n = 1)
+plus_forte_hausse
+```
+
+* c. En 2025, le mois le plus pluvieux a été janvier à Besançon (220 mm) et à Nîmes (79 mm), juillet à Orléans (139 mm) et novembre à Saint-Étienne (97 mm).
+* d. La plus forte hausse a été enregistrée à `r plus_forte_hausse$station` au mois de `r plus_forte_hausse$mois` avec +`r plus_forte_hausse$difference` mm (passant de `r plus_forte_hausse[["2024"]]` mm en 2024 à `r plus_forte_hausse[["2025"]]` mm en 2025).
+
+## C2
+
+```{r c2}
+# C2 - Passage des températures au format long puis calcul de l'amplitude en format large
+meteo_temp_long <- meteo %>%
+  select(station, date, temp_min, temp_max) %>%
+  pivot_longer(
+    cols = c(temp_min, temp_max),
+    names_to = "type_mesure",
+    names_prefix = "temp_",
+    values_to = "temperature"
+  )
+
+amplitude_moyenne <- meteo_temp_long %>%
+  pivot_wider(
+    names_from = type_mesure,
+    values_from = temperature
+  ) %>%
+  mutate(amplitude = max - min) %>%
+  group_by(station) %>%
+  summarise(amplitude_moy = mean(amplitude, na.rm = TRUE), .groups = "drop")
+amplitude_moyenne
+```
+
+L'amplitude thermique quotidienne moyenne en janvier 2026 est de 6,13 °C à Besançon, 6,16 °C à Nîmes, 6,33 °C à Orléans et 6,36 °C à Saint-Étienne.
+
+## C3
+
+```{r c3}
+# C3.a - Import de "wines.xlsx" et passage au format long avec etape et descripteur
+wines <- read_excel("data/wines.xlsx")
+
+wines_long <- wines %>%
+  pivot_longer(
+    cols = matches("^(rest|view|shaking|tasting)[0-9]+$"),
+    names_to = c("etape", "descripteur"),
+    names_pattern = "^([a-z]+)([0-9]+)$",
+    values_to = "note"
+  )
+
+# C3.b - Moyenne par vin et par étape, puis retour au format large ordonné
+wines_large <- wines_long %>%
+  group_by(Wines, Soul, Global, etape) %>%
+  summarise(note_moyenne = mean(note, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = etape,
+    values_from = note_moyenne
+  ) %>%
+  select(Wines, Soul, Global, rest, view, shaking, tasting)
+wines_large
+
+# C3.c - Les 3 meilleurs vins à l'étape tasting et leur type de sol
+top3_tasting <- wines_large %>%
+  slice_max(order_by = tasting, n = 3) %>%
+  select(Wines, Soul, tasting)
+top3_tasting
+
+# C3.d - Corrélation entre la note Global et la moyenne à l'étape tasting
+cor_global_tasting <- cor(wines_large$Global, wines_large$tasting)
+cor_global_tasting
+```
+
+* c. Les 3 meilleurs vins à l'étape tasting sont `r paste0(top3_tasting$Wines, " (", round(top3_tasting$tasting, 2), ", sol : ", top3_tasting$Soul, ")", collapse = ", ")`.
+* d. La note Global est fortement corrélée positivement à la moyenne obtenue à l'étape tasting, avec un coefficient de corrélation linéaire r = `r round(cor_global_tasting, 3)`.
