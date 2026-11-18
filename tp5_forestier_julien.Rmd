@@ -369,3 +369,163 @@ cor_global_tasting
 
 * c. Les 3 meilleurs vins à l'étape tasting sont `r paste0(top3_tasting$Wines, " (", round(top3_tasting$tasting, 2), ", sol : ", top3_tasting$Soul, ")", collapse = ", ")`.
 * d. La note Global est fortement corrélée positivement à la moyenne obtenue à l'étape tasting, avec un coefficient de corrélation linéaire r = `r round(cor_global_tasting, 3)`.
+
+
+
+
+
+
+
+# Partie D : Nettoyer un fichier RH et joindre des tables
+
+## D1
+
+```{r d1}
+# D1 - Import de "employee.csv" et diagnostic des anomalies
+emp <- read_csv("data/employee.csv")
+
+# Valeurs manquantes par colonne
+colSums(is.na(emp))
+
+# Casse incohérente sur Country
+table(emp$Country, useNA = "ifany")
+
+# Codes incohérents sur Gender
+table(emp$Gender, useNA = "ifany")
+
+# Doublons sur Employee_ID
+emp %>% count(Employee_ID) %>% filter(n > 1)
+
+# Salaires aberrants (< 10 000)
+emp %>% filter(Salary < 10000)
+
+# Dates stockées en texte et dates d'embauche antérieures à 1974
+emp %>%
+  mutate(Hire_Date_dt = dmy(Hire_Date)) %>%
+  filter(year(Hire_Date_dt) < 1974)
+```
+
+Liste des anomalies relevées dans `employee.csv` (235 lignes) :
+* Valeurs manquantes : 5 lignes concernées au total (1 dans `Employee_ID`, 1 dans `Gender`, 1 dans `Salary`, 1 dans `Job_Title`, 1 dans `Hire_Date`).
+* Codes de pays en minuscules (`au` et `us` au lieu de `AU` et `US`) : 6 lignes concernées (3 `au` et 3 `us`).
+* Code de sexe invalide (`G` au lieu de `F` ou `M`) : 1 ligne concernée (plus 1 `NA`).
+* Doublon d'identifiant (`Employee_ID == 120108` attribué à deux personnes différentes, Gladys Gromek et Gabriele Baker) : 2 lignes concernées (1 identifiant en double).
+* Salaires aberrants inférieurs à 10 000 (probablement un zéro manquant : 2 650 et 2 401) : 2 lignes concernées.
+* Dates stockées au format texte (`character`) au lieu de `Date` : 235 lignes concernées pour `Birth_Date` et 234 lignes non manquantes pour `Hire_Date`.
+* Dates d'embauche antérieures à la création de l'entreprise en 1974 (1953 — antérieure même à la naissance de l'employée — et 1968) : 2 lignes concernées.
+
+## D2
+
+```{r d2}
+# D2 - Pipeline de nettoyage et création de emp_propre
+emp_propre <- emp %>%
+  mutate(
+    Country = str_to_upper(Country),
+    Gender = if_else(Gender %in% c("F", "M"), Gender, NA_character_),
+    Salary = if_else(Salary < 10000, Salary * 10, Salary),
+    Birth_Date = dmy(Birth_Date),
+    Hire_Date = dmy(Hire_Date),
+    Hire_Date = if_else(year(Hire_Date) < 1974, as.Date(NA), Hire_Date),
+    Employee_ID = if_else(is.na(Employee_ID), max(Employee_ID, na.rm = TRUE) + 1, Employee_ID),
+    age_embauche = as.integer(interval(Birth_Date, Hire_Date) / years(1)),
+    anciennete = as.integer(interval(Hire_Date, ymd("2007-12-31")) / years(1))
+  )
+
+# Vérification de la disparition des anomalies de D1
+table(emp_propre$Country, useNA = "ifany")
+table(emp_propre$Gender, useNA = "ifany")
+sum(emp_propre$Salary < 10000, na.rm = TRUE)
+class(emp_propre$Birth_Date)
+class(emp_propre$Hire_Date)
+sum(year(emp_propre$Hire_Date) < 1974, na.rm = TRUE)
+sum(is.na(emp_propre$Employee_ID))
+```
+
+Toutes les anomalies corrigées dans le pipeline ont bien disparu : `Country` est uniquement en majuscules (`AU`, `US`), `Gender` ne contient que `F`, `M` ou `NA`, aucun salaire n'est inférieur à 10 000, les dates sont bien de classe `Date` sans aucune embauche avant 1974, et l'employé sans identifiant a reçu l'ID `r max(emp$Employee_ID, na.rm = TRUE) + 1`.
+
+## D3
+
+```{r d3}
+# D3.a - Salaire médian par pays et par sexe
+sal_median_pays_sexe <- emp_propre %>%
+  filter(!is.na(Gender)) %>%
+  group_by(Country, Gender) %>%
+  summarise(salaire_median = median(Salary, na.rm = TRUE), .groups = "drop")
+sal_median_pays_sexe
+
+# D3.b - Les 5 intitulés de poste les plus fréquents et leur salaire moyen
+top5_postes <- emp_propre %>%
+  filter(!is.na(Job_Title)) %>%
+  group_by(Job_Title) %>%
+  summarise(
+    effectif = n(),
+    salaire_moyen = mean(Salary, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  slice_max(order_by = effectif, n = 5, with_ties = FALSE)
+top5_postes
+
+# D3.c - Âge moyen à l'embauche selon la décennie d'embauche
+age_decennie <- emp_propre %>%
+  filter(!is.na(Hire_Date)) %>%
+  mutate(decennie = (year(Hire_Date) %/% 10) * 10) %>%
+  group_by(decennie) %>%
+  summarise(age_moyen_embauche = mean(age_embauche, na.rm = TRUE), .groups = "drop")
+age_decennie
+
+# D3.d - Âge minimal à l'embauche et employés embauchés avant 16 ans
+age_min <- min(emp_propre$age_embauche, na.rm = TRUE)
+jeunes_embauches <- emp_propre %>%
+  filter(age_embauche < 16) %>%
+  select(Employee_ID, First, Last, Birth_Date, Hire_Date, age_embauche, Job_Title)
+jeunes_embauches
+```
+
+* a. Les salaires médians sont de 27 110 $ (femmes) et 28 090 $ (hommes) en Australie, contre 36 315 $ (femmes) et 35 870 $ (hommes) aux États-Unis.
+* b. Les 5 postes les plus fréquents sont Trainee (18 employés, 25 476,94 $), Warehouse Assistant I (10 employés, 26 261,50 $), Purchasing Agent I (6 employés, 30 976,67 $), Accountant I (5 employés, 31 563,00 $) et Shipping Manager (5 employés, 57 477,00 $).
+* c. L'âge moyen à l'embauche est de 25,8 ans dans les années 1970, 23,2 ans dans les années 1980, 23,8 ans dans les années 1990 et 23,4 ans dans les années 2000.
+* d. L'âge minimal à l'embauche est de `r age_min` ans, et `r nrow(jeunes_embauches)` employés ont été embauchés avant 16 ans (Wesley Shirts et Kimberly Howell, embauchés à 15 ans). Cela reste plausible dans le cadre d'emplois saisonniers ou de stages jeunesse dans le commerce de détail aux États-Unis, même si cela se situe à la limite légale minimale d'âge au travail.
+
+## D4
+
+```{r d4}
+# D4.a - Import de "commandes.csv" et "customer.csv", vérification des clients manquants
+commandes <- read_csv("data/commandes.csv")
+customer <- read_csv("data/customer.csv")
+
+clients_absents <- anti_join(commandes, customer, by = "Customer_ID")
+nrow(clients_absents)
+
+# D4.b - Ajout du pays et du sexe du client, calcul du CA par pays et part des États-Unis
+commandes_clients <- commandes %>%
+  left_join(customer %>% select(Customer_ID, Country, Gender), by = "Customer_ID")
+
+ca_par_pays <- commandes_clients %>%
+  group_by(Country) %>%
+  summarise(CA = sum(Total_Retail_Price, na.rm = TRUE), .groups = "drop") %>%
+  mutate(part_pct = CA / sum(CA) * 100) %>%
+  arrange(desc(CA))
+ca_par_pays
+
+# D4.c - Jointure entre les commandes avec vendeur et emp_propre
+commandes_avec_vendeur <- commandes %>%
+  filter(Employee_ID != 99999999)
+
+commandes_vendeurs_trouves <- commandes_avec_vendeur %>%
+  inner_join(emp_propre, by = "Employee_ID")
+
+nrow(commandes_avec_vendeur)
+nrow(commandes_vendeurs_trouves)
+
+# D4.d - Vendeur ayant réalisé le plus gros CA parmi ceux identifiés
+meilleur_vendeur <- commandes_vendeurs_trouves %>%
+  group_by(Employee_ID, First, Last, Job_Title) %>%
+  summarise(CA = sum(Total_Retail_Price, na.rm = TRUE), .groups = "drop") %>%
+  slice_max(order_by = CA, n = 1)
+meilleur_vendeur
+```
+
+* a. `anti_join()` renvoie `r nrow(clients_absents)` ligne : tous les clients présents dans `commandes.csv` figurent bien dans `customer.csv`.
+* b. Les clients américains (`US`) génèrent un chiffre d'affaires de 43 525,10 $, soit `r round(ca_par_pays$part_pct[ca_par_pays$Country == "US"], 2)` % du chiffre d'affaires total.
+* c. Sur les `r nrow(commandes_avec_vendeur)` lignes de commandes avec vendeur (`Employee_ID != 99999999`), seules `r nrow(commandes_vendeurs_trouves)` lignes (correspondant à 7 vendeurs sur 100) retrouvent leur vendeur dans `emp_propre`. On en conclut que `employee.csv` ne constitue qu'un extrait partiel du personnel de l'entreprise (la majorité des commerciaux ayant enregistré les ventes ne figurent pas dans ce fichier RH).
+* d. Parmi les vendeurs identifiés dans `emp_propre`, celui qui a réalisé le plus gros chiffre d'affaires est `r paste(meilleur_vendeur$First, meilleur_vendeur$Last)` (`r meilleur_vendeur$Job_Title`), avec un CA de `r round(meilleur_vendeur$CA, 2)` $.
