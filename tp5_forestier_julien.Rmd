@@ -1,0 +1,148 @@
+---
+title: "TP 5 : Importer, ranger et nettoyer des données"
+author: "Julien Forestier"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(tidyverse)
+library(readxl)
+```
+
+# Partie A : Importer des fichiers texte récalcitrants
+
+## A1
+
+```{r a1}
+# A1.a - Import du fichier "auto2004_original.txt"
+ref <- read.table("data/auto2004_original.txt", header = TRUE, sep = "\t", fileEncoding = "latin1")
+
+# A1.b - Import du fichier "auto2004_original_ligne3.txt"
+orig_l3 <- read.table("data/auto2004_original_ligne3.txt", header = TRUE, sep = "\t", skip = 3, fileEncoding = "latin1")
+
+# A1.c - Import du fichier "auto2004_sans_nom.txt"
+sans_nom <- read.table("data/auto2004_sans_nom.txt", header = FALSE, sep = "\t", col.names = names(ref), fileEncoding = "latin1")
+
+# A1.d - Import du fichier "auto2004_don_manquante.txt"
+dm <- read.table("data/auto2004_don_manquante.txt", header = TRUE, sep = "\t", na.strings = "", fileEncoding = "latin1")
+
+# A1.e - Import du fichier "auto2004_don_manquan_99999.txt"
+d99 <- read.table("data/auto2004_don_manquan_99999.txt", header = TRUE, sep = "\t", na.strings = "99999", fileEncoding = "latin1")
+
+# A1 - Vérification des noms, dimensions et types
+identical(list(names(orig_l3), dim(orig_l3), sapply(orig_l3, class)), list(names(ref), dim(ref), sapply(ref, class)))
+identical(list(names(sans_nom), dim(sans_nom), sapply(sans_nom, class)), list(names(ref), dim(ref), sapply(ref, class)))
+identical(list(names(dm), dim(dm), sapply(dm, class)), list(names(ref), dim(ref), sapply(ref, class)))
+identical(list(names(d99), dim(d99), sapply(d99, class)), list(names(ref), dim(ref), sapply(ref, class)))
+```
+
+## A2
+
+```{r a2}
+# A2.a - Comptage et comparaison des positions des valeurs manquantes
+nb_na_dm <- sum(is.na(dm))
+nb_na_d99 <- sum(is.na(d99))
+memes_positions <- identical(is.na(dm), is.na(d99))
+
+# A2.b - Extraction des modèles et valeurs originales des cases manquantes
+pos_na <- which(is.na(dm), arr.ind = TRUE)
+detail_na <- data.frame(
+  Ligne = pos_na[, "row"],
+  Modele = ref$Modele[pos_na[, "row"]],
+  Variable = names(ref)[pos_na[, "col"]],
+  Valeur_originale = ref[pos_na]
+)
+detail_na <- detail_na[order(detail_na$Ligne), ]
+detail_na
+
+# A2.c - Calcul de la puissance moyenne sans na.strings et écart
+d99_brut <- read.table("data/auto2004_don_manquan_99999.txt", header = TRUE, sep = "\t", fileEncoding = "latin1")
+moy_brut <- mean(d99_brut$Puissance)
+moy_propre <- mean(d99$Puissance, na.rm = TRUE)
+ecart_puissance <- moy_brut - moy_propre
+```
+
+* a. dm et d99 contiennent chacun `r nb_na_dm` valeurs manquantes, situées exactement aux mêmes positions (`r memes_positions`).
+* b. Les modèles concernés et leurs valeurs d'origine sont affichés dans le tableau detail_na ci-dessus.
+* c. Sans na.strings, la puissance moyenne vaut `r round(moy_brut, 2)` ch au lieu de `r round(moy_propre, 2)` ch, soit une erreur de `r round(ecart_puissance, 2)` ch.
+
+## A3
+
+```{r a3}
+# A3.a - Import du fichier "stations_janvier2026.csv"
+meteo <- read_delim(
+  "data/stations_janvier2026.csv",
+  delim = ";",
+  comment = "#",
+  na = c("n/a", "-"),
+  locale = locale(decimal_mark = ",", encoding = "latin1", date_format = "%d/%m/%Y"),
+  col_types = cols(
+    station = col_character(),
+    date = col_date(),
+    temp_min = col_double(),
+    temp_max = col_double(),
+    pluie_mm = col_double(),
+    vent_kmh = col_double()
+  )
+)
+
+# A3.b - Vérification des dimensions, types, NA, période et stations
+dim(meteo)
+sapply(meteo, class)
+colSums(is.na(meteo))
+range(meteo$date)
+unique(meteo$station)
+```
+
+Le tableau contient `r nrow(meteo)` lignes et `r ncol(meteo)` colonnes, avec `r sum(is.na(meteo$temp_max))` NA dans temp_max et `r sum(is.na(meteo$vent_kmh))` NA dans vent_kmh, couvrant du `r min(meteo$date)` au `r max(meteo$date)` pour les stations `r paste(unique(meteo$station), collapse = ", ")`.
+
+## A4
+
+```{r a4}
+# A4.a - Calcul des indicateurs météo par station
+bilan_meteo <- meteo %>%
+  group_by(station) %>%
+  summarise(
+    temp_min_moy = mean(temp_min, na.rm = TRUE),
+    temp_max_moy = mean(temp_max, na.rm = TRUE),
+    cumul_pluie  = sum(pluie_mm, na.rm = TRUE),
+    jours_gel    = sum(temp_min < 0, na.rm = TRUE),
+    jours_pluie  = sum(pluie_mm > 0, na.rm = TRUE),
+    .groups = "drop"
+  )
+bilan_meteo
+
+# A4.b - Stations record pour le gel et la pluie
+station_max_gel <- bilan_meteo %>% slice_max(jours_gel, n = 1)
+station_max_pluie <- bilan_meteo %>% slice_max(cumul_pluie, n = 1)
+
+# A4.c - Jour le plus froid de chaque station
+jours_plus_froids <- meteo %>%
+  group_by(station) %>%
+  slice_min(temp_min, n = 1, with_ties = TRUE) %>%
+  select(station, date, temp_min)
+jours_plus_froids
+```
+
+* b. `r station_max_gel$station` a connu le plus de jours de gel (`r station_max_gel$jours_gel` jours) et `r station_max_pluie$station` a reçu le plus de pluie (`r station_max_pluie$cumul_pluie` mm).
+* c. Les jours les plus froids sont le 26/01/2026 à Besançon (-5,1 °C), le 29/01/2026 à Nîmes (0,1 °C), le 15/01/2026 à Orléans (-5,4 °C) et le 02/01/2026 à Saint-Étienne (-5,6 °C).
+
+## A5
+
+* p1 : read.csv() attend , comme séparateur et . comme décimale, ce qui fusionne toutes les colonnes en une seule.
+* p2 : read.csv2() ne reconnaît pas "n/a" comme valeur manquante, rendant la colonne stock de type character (et risque d'encodage UTF-8 sous Windows).
+* p3 : skip = 1 saute la 1re ligne contenant les noms de colonnes et prend la 1re observation comme en-tête.
+
+```{r a5}
+# A5 - Vérification des imports erronés et import corrigé de "prix_fr.csv"
+p1 <- read.csv("data/prix_fr.csv")
+p2 <- read.csv2("data/prix_fr.csv")
+p3 <- read_csv2("data/prix_fr.csv", na = "n/a", skip = 1)
+
+prix_fr <- read_csv2("data/prix_fr.csv", na = "n/a")
+prix_fr
+```
