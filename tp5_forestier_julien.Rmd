@@ -146,3 +146,105 @@ p3 <- read_csv2("data/prix_fr.csv", na = "n/a", skip = 1)
 prix_fr <- read_csv2("data/prix_fr.csv", na = "n/a")
 prix_fr
 ```
+
+# Partie B : Excel, SAS et export
+
+## B1
+
+```{r b1}
+# B1.a - Liste des feuilles du classeur "pluie_mensuelle.xlsx"
+feuilles_pluie <- excel_sheets("data/pluie_mensuelle.xlsx")
+feuilles_pluie
+
+# B1.b - Import des deux feuilles (en-tête à la ligne 4 -> skip = 3) et empilement
+pluie <- bind_rows(
+  read_excel("data/pluie_mensuelle.xlsx", sheet = "2024", skip = 3) %>% mutate(annee = 2024),
+  read_excel("data/pluie_mensuelle.xlsx", sheet = "2025", skip = 3) %>% mutate(annee = 2025)
+)
+pluie
+
+# B1.c - Cumul annuel de chaque station pour chaque année
+cumul_pluie_annuel <- pluie %>%
+  mutate(cumul_annuel = rowSums(across(janv:déc), na.rm = TRUE)) %>%
+  select(station, annee, cumul_annuel)
+cumul_pluie_annuel
+```
+
+* a. Le classeur contient les feuilles `r paste(feuilles_pluie, collapse = " et ")`. Sur chaque feuille, les lignes 1 et 2 contiennent un titre et la source, la ligne 3 est vide, et le tableau commence à la ligne 4 (`skip = 3`).
+* c. En 2024, les cumuls annuels sont de 663 mm à Orléans, 626 mm à Besançon, 674 mm à Nîmes et 651 mm à Saint-Étienne. En 2025, ils sont de 863 mm à Orléans, 753 mm à Besançon, 419 mm à Nîmes et 677 mm à Saint-Étienne.
+
+## B2
+
+```{r b2}
+library(haven)
+
+# B2.a - Import du fichier SAS "paysniv3.sas7bdat" et inspection
+pays <- read_sas("data/paysniv3.sas7bdat")
+dim(pays)
+vars_na <- names(pays)[colSums(is.na(pays)) > 0]
+colSums(is.na(pays))[vars_na]
+
+# B2.b - Transformation de CONTI en facteur avec les noms des continents
+pays <- pays %>%
+  mutate(
+    CONTI = factor(
+      CONTI,
+      levels = 1:5,
+      labels = c("Afrique", "Asie", "Amériques", "Europe", "Océanie")
+    )
+  )
+
+# B2.c - Statistiques par continent triées par espérance de vie
+bilan_continents <- pays %>%
+  group_by(CONTI) %>%
+  summarise(
+    nb_pays = n(),
+    esperance_vie_moy = mean(ESPER, na.rm = TRUE),
+    fecondite_moy = mean(FERTI, na.rm = TRUE),
+    pnb_median = median(PNB, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(esperance_vie_moy)
+bilan_continents
+
+# B2.d - Les 5 pays avec l'espérance de vie la plus basse
+top5_esper_basse <- pays %>%
+  slice_min(order_by = ESPER, n = 5) %>%
+  select(NOM, CONTI, ESPER)
+top5_esper_basse
+```
+
+* a. Le fichier contient `r nrow(pays)` pays et `r ncol(pays)` variables. Les variables contenant des valeurs manquantes sont : `r paste(vars_na, collapse = ", ")`.
+* d. Les 5 pays ayant l'espérance de vie la plus faible sont `r paste0(top5_esper_basse$NOM, " (", top5_esper_basse$ESPER, " ans)", collapse = ", ")`.
+
+## B3
+
+```{r b3}
+
+library(writexl)
+
+# Création du dossier sorties/ si inexistant
+if (!dir.exists("sorties")) {
+  dir.create("sorties")
+}
+
+# B3.a - Export de bilan_meteo en CSV français et relecture
+write_csv2(bilan_meteo, "sorties/bilan_meteo.csv")
+bilan_meteo_relu <- read_csv2("sorties/bilan_meteo.csv")
+all.equal(bilan_meteo, bilan_meteo_relu)
+
+# B3.b - Export de pluie et bilan_meteo dans un seul fichier Excel
+write_xlsx(
+  list(pluie = pluie, bilan_meteo = bilan_meteo),
+  path = "sorties/synthese_meteo.xlsx"
+)
+
+# B3.c - Sauvegarde de pays en .rds, relecture et vérification du type de CONTI
+saveRDS(pays, "sorties/pays.rds")
+pays_relu <- readRDS("sorties/pays.rds")
+is.factor(pays_relu$CONTI)
+levels(pays_relu$CONTI)
+```
+
+* a. À la relecture avec `read_csv2()`, on retrouve exactement les mêmes valeurs et dimensions que `bilan_meteo` (seul l'attribut `spec` de `readr` est ajouté).
+* c. Après relecture du fichier `.rds`, la colonne `CONTI` est toujours un facteur (`r is.factor(pays_relu$CONTI)`) avec ses niveaux conservés. Avec un fichier CSV, les métadonnées R sont perdues et la colonne deviendrait une simple chaîne de caractères (`character`).
